@@ -21,21 +21,25 @@
 // НАСТРОЙКИ WiFi
 // ============================================================================
 
-const char *WIFI_SSID = "YOUR_WIFI_SSID";         // ← ИЗМЕНИТЕ НА ИМЯ ВАШЕЙ WiFi СЕТИ
-const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"; // ← ИЗМЕНИТЕ НА ПАРОЛЬ
+const char *WIFI_SSID = "TOTOLINK_A702R";
+const char *WIFI_PASSWORD = "87654321";
 
 // ============================================================================
 // НАСТРОЙКИ СЕРВЕРА
 // ============================================================================
 
-const char *SERVER_URL = "http://192.168.1.100:3000/data"; // ← ИЗМЕНИТЕ IP НА ВАШ КОМПЬЮТЕР
+const char *SERVER_URL   = "http://192.168.0.3:3000/data";
+const char *COMMAND_URL  = "http://192.168.0.3:3000/command";
 
 // ============================================================================
 // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 // ============================================================================
 
 unsigned long lastConnectionAttempt = 0;
-const unsigned long CONNECTION_RETRY_DELAY = 5000; // 5 секунд между попытками
+const unsigned long CONNECTION_RETRY_DELAY = 5000;
+
+unsigned long lastCmdPoll = 0;
+const unsigned long CMD_POLL_INTERVAL = 200; // Poll commands every 200ms
 
 // ============================================================================
 // ПРОТОТИПЫ ФУНКЦИЙ
@@ -43,6 +47,7 @@ const unsigned long CONNECTION_RETRY_DELAY = 5000; // 5 секунд между 
 
 void connectToWiFi();
 void sendToServer(String jsonData);
+void pollCommands();
 String addMetadata(String jsonData);
 void sendTestData();
 
@@ -115,7 +120,10 @@ void loop()
         }
     }
 
-    delay(10); // Небольшая задержка для стабильности
+    // Poll server for commands from browser
+    pollCommands();
+
+    delay(10);
 }
 
 // ============================================================================
@@ -211,6 +219,55 @@ void sendToServer(String jsonData)
 // ============================================================================
 // ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ (для будущего расширения)
 // ============================================================================
+
+/**
+ * Poll server for commands from browser and forward to STM32
+ * Command format sent to STM32: "C:F:70\n" (forward 70%)
+ */
+void pollCommands()
+{
+    if (WiFi.status() != WL_CONNECTED) return;
+    if (millis() - lastCmdPoll < CMD_POLL_INTERVAL) return;
+    lastCmdPoll = millis();
+
+    HTTPClient http;
+    http.begin(COMMAND_URL);
+    int code = http.GET();
+
+    if (code == 200)
+    {
+        String response = http.getString();
+        if (response.length() > 2) // Not just "{}"
+        {
+            StaticJsonDocument<128> doc;
+            if (!deserializeJson(doc, response) && doc.containsKey("action"))
+            {
+                String action = doc["action"].as<String>();
+                int spd = doc["speed"] | 70;
+                String cmd = "";
+
+                if      (action == "forward")  cmd = "C:F:" + String(spd);
+                else if (action == "backward") cmd = "C:B:" + String(spd);
+                else if (action == "left")     cmd = "C:L:" + String(spd);
+                else if (action == "right")    cmd = "C:R:" + String(spd);
+                else if (action == "stop")     cmd = "C:S";
+                else if (action == "motor")
+                {
+                    int id    = doc["id"] | 0;
+                    String dir = doc["dir"] | "stop";
+                    char d = (dir == "forward") ? 'F' : (dir == "backward") ? 'B' : 'S';
+                    cmd = "C:M:" + String(id) + ":" + String(d) + ":" + String(spd);
+                }
+
+                if (cmd.length() > 0)
+                {
+                    Serial.println(cmd); // Send to STM32 via UART
+                }
+            }
+        }
+    }
+    http.end();
+}
 
 /**
  * Парсинг JSON и добавление метаданных
