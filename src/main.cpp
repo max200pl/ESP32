@@ -29,7 +29,7 @@ const char *WIFI_PASSWORD = "87654321";
 // НАСТРОЙКИ СЕРВЕРА
 // ============================================================================
 
-const char *SERVER_HOST = "192.168.0.2";
+const char *SERVER_HOST = "192.168.0.3";
 const uint16_t SERVER_PORT = 3000;
 const char *SERVER_PATH = "/ws";
 
